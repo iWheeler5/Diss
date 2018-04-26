@@ -1,0 +1,204 @@
+imgListFile = fopen('miasdb1.txt', 'r');
+
+%generates array for image features and cell array for image labels
+F = double.empty; Labels = cell(234, 1);
+
+tline = fgetl(imgListFile); currentLine = 1;
+
+count = 1;
+
+fileType = '.pgm';
+
+
+
+
+
+while ischar(tline)  
+    disp(tline)
+    
+    %splits the line into a cell array of strings
+    splitLine = split(tline);
+    
+    %extract image features using Local Binary Patterns%
+    imageName = splitLine{1};
+    imagePath = fullfile('C:\Users\user\Desktop\Diss\mini_MIASdb', strcat(imageName, fileType));
+    
+    I = imread(imagePath);
+    
+    %exits the loop if the image contains no abnormality
+    if length(splitLine) < 5
+        tline = fgetl(imgListFile);
+        currentLine = currentLine + 1;
+        continue
+    end
+    
+    %crops abnormality and normality sections of image%
+    
+    %reads in values from the text file in order to identify the area of
+    %the abnormality
+    xCord = str2double(splitLine{5});
+    yCord = str2double(splitLine{6});
+    radius = str2double(splitLine{7});
+    
+    %sets out the x, y coordinates of the top right corner of the segment
+    abNyMin = xCord - radius;
+    abNxMin = yCord - radius;
+    
+    %sets out the height and width of the abnormality of the image
+    abnwidth = abNxMin + radius;
+    abnheight = abNyMin + radius;
+    
+    
+    %sets out the x, y coordinates of the top right corner of the segment
+    normyMin = xCord - radius * 2;
+    normxMin = yCord; 
+    
+    %error catch in order to prevent the value being less than 0 and
+    %causing the program to crash
+    if normyMin < 0
+        normyMin = 1;
+    end
+    
+    %sets out the height and width of the normal segment of the image
+    normWidth = normxMin + radius;
+    normHeight = normyMin + radius;
+    
+    %crops the abnormality and the normal segments respectively
+    AbnormImgCrop = imcrop(I,[abNxMin, abNyMin, abnwidth, abnheight]);
+    normImgCrop = imcrop(I, [normxMin, normyMin, normWidth, normHeight]);
+
+    
+    
+    %Extracts features of abnormality and normality
+    abnormalFeatures = extractLBPFeatures(AbnormImgCrop, 'Upright', false);
+    normalFeatures = extractLBPFeatures(normImgCrop, 'Upright', false);
+    
+    F(count, :) = abnormalFeatures;
+    F(count + 1, :) = normalFeatures;
+    
+    %store current label%
+    Labels{count} = 'a';
+    Labels{count + 1} = 'n'; 
+    tline = fgetl(imgListFile);
+    count = count + 2;
+    currentLine = currentLine + 1;
+    
+end
+
+
+
+fclose(imgListFile);
+
+%image classification using naive-bayes
+sens = zeros(10, 1);
+spec = zeros(10, 1);
+acc = zeros(10, 1);
+
+%rudimental 10-fold cross validation, repeats whole process 10 times
+for k = 1:10
+    %creates vector of unqiue random numbers from 1 to 234
+    random = randperm(234);
+
+    %create new arrays for randomised data
+    
+    randFeatures = zeros(234, 10); randLabels = cell(234, 1);
+    
+    %randomises the datasets and copies the data to new arrays%
+    for i = 1:234
+    
+        newIndex = random(i);
+    
+        randFeatures(i, :) = F(newIndex, :);
+    
+        randLabels{i} = Labels{newIndex};
+    
+    end
+    %sets out the sizes of the xtrain and xtest sets
+    xTrain = randFeatures(1:187, :);
+    xTest = randFeatures(188:234, :);
+    
+    %segment to reshape cell array to fit naive bayes
+    matrixConv = [randLabels{:}];
+
+    numYTrain = matrixConv(1:187);
+    numYTest = matrixConv(188:234);
+
+    yTrainPreShape = num2cell(numYTrain);
+    yTestPreShape = num2cell(numYTest);
+
+    yTrain = reshape(yTrainPreShape, 187, 1);
+    yTest = reshape(yTestPreShape, 47, 1);
+    % end of reshape segment
+    
+    %trains the naive bayes model
+    nb = fitcnb(xTrain, yTrain);
+    
+    %cell array of predicted classifications
+    predictedClassifications = predict(nb, xTest);
+
+                                     
+                                    
+    %evaluating the Classification Method%
+
+    matchCount = 0;
+    numPos = 0;
+    numNeg = 0;
+    truePos = 0;
+    trueNeg = 0;
+    falsePos = 0;
+    falseNeg = 0;
+    for i = 1:47
+        %number of abnormalities
+        if yTest{i, 1} == 'a'
+            numPos = numPos + 1;
+        end
+        %number of normals
+        if yTest{i, 1} == 'n'
+            numNeg = numNeg + 1;
+        end
+        %number of true positives
+        if predictedClassifications{i, 1} == 'a' && yTest{i, 1} == 'a'
+            truePos = truePos + 1;
+        end
+        %number of false positives
+        if predictedClassifications{i, 1} == 'a' && yTest{i, 1} == 'n'
+            falsePos = falsePos + 1;
+        end
+        %number of true negatives
+        if predictedClassifications{i, 1} == 'n' && yTest{i, 1} == 'n'
+            trueNeg = trueNeg + 1;
+        end
+    %number of false negatives
+        if predictedClassifications{i, 1} == 'n' && yTest{i, 1} == 'a'
+            falseNeg = falseNeg + 1;
+        end
+    end
+    %calculates sensitivity of classification
+    sensitivity = truePos / numPos;
+    %calculates specificity of classification
+    specificity = trueNeg / numNeg;
+    %calculates accuracy of classification
+    accuracy = (truePos + trueNeg)/(truePos + falsePos + falseNeg + trueNeg);
+
+    %adds the 10 values to the array as it loops round the 10 folds of 
+    %cross validation 
+    sens(k) = sensitivity;
+    spec(k) = specificity;
+    acc(k) = accuracy;
+    
+end
+%calcualtes the average results
+averageSens = mean(sens);
+averageSpec = mean(spec);
+averageAcc = mean(acc);
+
+%dipslays the average results
+disp('Average Sensitivity:');
+disp(averageSens);
+disp('Average Specificity:');
+disp(averageSpec);
+disp('Average Accuracy:');
+disp(averageAcc);
+
+
+
